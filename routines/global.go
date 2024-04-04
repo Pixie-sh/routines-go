@@ -11,12 +11,12 @@ var routine Routines = &goRoutine{
 }
 
 // GoTask launches a routine with the provided function and no context.
-func GoTask(fn Task) (ExecTaskChan, ReturnChan, ErrChan) {
+func GoTask(fn Task) (<-chan any, <-chan error) {
 	return routine.GoTask(fn)
 }
 
 // GoTaskCtx launches a routine with the provided function and context.
-func GoTaskCtx(ctx context.Context, fn Task) (ExecTaskChan, ReturnChan, ErrChan) {
+func GoTaskCtx(ctx context.Context, fn Task) (<-chan any, <-chan error) {
 	return routine.GoTaskCtx(ctx, fn)
 }
 

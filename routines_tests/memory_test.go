@@ -1,4 +1,4 @@
-package routines_tests
+package routines_test
 
 import (
 	"context"
