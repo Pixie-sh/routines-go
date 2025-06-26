@@ -15,15 +15,30 @@ func TestGoTask(t *testing.T) {
 		return "result", nil
 	})
 
+	// Wait a bit to ensure the task has completed
+	time.Sleep(100 * time.Millisecond)
+
+	// Check for errors first
 	select {
-	case err := <-errChan:
-		t.Fatalf("Did not expect an error but got one: %v", err)
-	case result := <-resultChan:
-		if result != "result" {
+	case err, ok := <-errChan:
+		if ok && err != nil {
+			// Only fail if we got a real error, not just a closed channel
+			t.Fatalf("Did not expect an error but got one: %v", err)
+		}
+	default:
+		// No error, continue
+	}
+
+	// Now check for results
+	select {
+	case result, ok := <-resultChan:
+		if ok && result != "result" {
 			t.Fatalf("Expected 'result', got %v", result)
+		} else if !ok {
+			t.Fatal("Result channel was closed without a result")
 		}
 	case <-time.After(1 * time.Second):
-		t.Fatal("Test timed out")
+		t.Fatal("Test timed out waiting for result")
 	}
 }
 
@@ -34,8 +49,14 @@ func TestGoTaskWithError(t *testing.T) {
 		return nil, errors.New("task error")
 	})
 
+	// Wait a bit to ensure the task has completed
+	time.Sleep(100 * time.Millisecond)
+
 	select {
-	case err := <-errChan:
+	case err, ok := <-errChan:
+		if !ok {
+			t.Fatal("Error channel was closed without an error")
+		}
 		if err == nil || err.Error() != "task error" {
 			t.Fatalf("Expected 'task error', got %v", err)
 		}
