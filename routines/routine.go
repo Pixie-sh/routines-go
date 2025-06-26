@@ -61,7 +61,7 @@ func (r *goRoutine) Go(task SimpleTask) {
 
 // launch uses a goroutine to execute a Task.
 // It handles panic recovery and context cancellation.
-// channels are not closed within, client may close it
+// channels are closed after task completion
 func (r *goRoutine) launch(ctx context.Context, fn Task) (<-chan any, <-chan error) {
 	errChan := make(chan error, 1)  // Buffered to prevent goroutine leaks in case of unhandled errors.
 	returnChan := make(chan any, 1) // Buffered to prevent goroutine leaks in case of unhandled errors.
@@ -72,23 +72,34 @@ func (r *goRoutine) launch(ctx context.Context, fn Task) (<-chan any, <-chan err
 		defer close(errChan)
 		defer close(returnChan)
 		defer r.wg.Done()
-		defer recoverPanic()
-
-	loop:
-		for {
-			select {
-			case <-ctx.Done():
-				break loop
-			default:
-				res, err := fn(ctx)
-				if err != nil {
-					_ = push(errChan, err)
-					break loop
-				} else if res != nil {
-					_ = push(returnChan, res)
-					break loop
+		defer func() {
+			if r := recover(); r != nil {
+				var err error
+				switch x := r.(type) {
+				case string:
+					err = fmt.Errorf("panic: %s", x)
+				case error:
+					err = fmt.Errorf("panic: %v", x)
+				default:
+					err = fmt.Errorf("unknown panic: %v", r)
 				}
+
+				logger.Logger.Error(err.Error())
+				_ = push(errChan, err)
 			}
+		}()
+
+		select {
+		case <-ctx.Done():
+			// Context was canceled, do nothing
+		default:
+			res, err := fn(ctx)
+			if err != nil {
+				_ = push(errChan, err)
+			} else if res != nil {
+				_ = push(returnChan, res)
+			}
+			// Always exit after executing the function once
 		}
 	}()
 
@@ -106,22 +117,5 @@ func push[T any](ch chan<- T, msg T) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-// recoverPanic recovers from panics and sends an error on the provided channel.
-func recoverPanic() {
-	if r := recover(); r != nil {
-		var err error
-		switch x := r.(type) {
-		case string:
-			err = fmt.Errorf("panic: %s", x)
-		case error:
-			err = fmt.Errorf("panic: %v", x)
-		default:
-			err = fmt.Errorf("unknown panic: %v", r)
-		}
-
-		logger.Logger.Error(err.Error())
 	}
 }
