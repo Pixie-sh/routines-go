@@ -2,7 +2,7 @@ package routines
 
 import (
 	"context"
-	"fmt"
+	"github.com/pixie-sh/errors-go"
 	"github.com/pixie-sh/logger-go/logger"
 	"sync"
 )
@@ -77,21 +77,21 @@ func (r *goRoutine) launch(ctx context.Context, fn Task) (<-chan any, <-chan err
 				var err error
 				switch x := r.(type) {
 				case string:
-					err = fmt.Errorf("panic: %s", x)
+					err = errors.New("panic: %v", x)
 				case error:
-					err = fmt.Errorf("panic: %v", x)
+					err = errors.New("panic: %v", x)
 				default:
-					err = fmt.Errorf("unknown panic: %v", r)
+					err = errors.New("unknown panic: %v", x)
 				}
 
-				logger.Logger.Error(err.Error())
+				logger.Logger.With("error", r).Error(err.Error())
 				_ = push(errChan, err)
 			}
 		}()
 
 		select {
 		case <-ctx.Done():
-			// Context was canceled, do nothing
+			push(errChan, ctx.Err())
 		default:
 			res, err := fn(ctx)
 			if err != nil {
