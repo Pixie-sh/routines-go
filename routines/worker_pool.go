@@ -23,6 +23,8 @@ type WorkerPool struct {
 	started        int32 // 0 = not started, 1 = started
 	resultsChannel chan TaskResult
 	routines       Routines
+	pollInterval   time.Duration // Time between queue empty checks (default 10ms)
+	gracePeriod    time.Duration // Grace period for in-progress tasks (default 100ms)
 }
 
 // NewWorkerPool creates a new worker pool with the specified number of workers and queue size
@@ -44,7 +46,14 @@ func NewWorkerPool(ctx context.Context, workers int, queueSize int) (*WorkerPool
 		started:        0,
 		resultsChannel: make(chan TaskResult, queueSize),
 		routines:       NewRoutinesPool(poolCtx),
+		pollInterval:   10 * time.Millisecond,
+		gracePeriod:    100 * time.Millisecond,
 	}, nil
+}
+
+func (wp *WorkerPool) SetWaitTimeouts(pollInterval, gracePeriod time.Duration) {
+	wp.pollInterval = pollInterval
+	wp.gracePeriod = gracePeriod
 }
 
 // Start starts the worker pool
@@ -190,12 +199,9 @@ func (wp *WorkerPool) Wait() {
 				break
 			}
 
-			// Small sleep to prevent CPU spinning
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(wp.pollInterval)
 		}
-
-		// Give a small amount of time for any in-progress tasks to complete
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(wp.gracePeriod)
 
 		close(done)
 	}()
