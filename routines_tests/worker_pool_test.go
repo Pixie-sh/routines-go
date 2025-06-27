@@ -25,9 +25,9 @@ func TestWorkerPool_Basic(t *testing.T) {
 	// Counter to track completed tasks
 	var counter int32
 
-	// Submit 5 tasks
+	// AddTask 5 tasks
 	for i := 0; i < 5; i++ {
-		err := pool.Submit(func(ctx context.Context) (any, error) {
+		err := pool.AddTask(func(ctx context.Context) (any, error) {
 			time.Sleep(100 * time.Millisecond) // Simulate work
 			atomic.AddInt32(&counter, 1)
 			return nil, nil
@@ -59,8 +59,8 @@ func TestWorkerPool_SubmitWait(t *testing.T) {
 	}
 	defer pool.Stop()
 
-	// Submit a task and wait for its result
-	result, err := pool.SubmitWait(func(ctx context.Context) (any, error) {
+	// AddTask a task and wait for its result
+	result, err := pool.AddTaskAndWait(func(ctx context.Context) (any, error) {
 		return "test result", nil
 	})
 
@@ -86,8 +86,8 @@ func TestWorkerPool_Error(t *testing.T) {
 	}
 	defer pool.Stop()
 
-	// Submit a task that returns an error
-	_, err = pool.SubmitWait(func(ctx context.Context) (any, error) {
+	// AddTask a task that returns an error
+	_, err = pool.AddTaskAndWait(func(ctx context.Context) (any, error) {
 		return nil, errors.New("test error")
 	})
 
@@ -113,8 +113,8 @@ func TestWorkerPool_QueueFull(t *testing.T) {
 	}
 	defer pool.Stop()
 
-	// Submit a task that blocks for a while
-	err = pool.Submit(func(ctx context.Context) (any, error) {
+	// AddTask a task that blocks for a while
+	err = pool.AddTask(func(ctx context.Context) (any, error) {
 		time.Sleep(500 * time.Millisecond) // Block the worker
 		return nil, nil
 	})
@@ -122,8 +122,8 @@ func TestWorkerPool_QueueFull(t *testing.T) {
 		t.Fatalf("Failed to submit first task: %v", err)
 	}
 
-	// Submit another task to fill the queue
-	err = pool.Submit(func(ctx context.Context) (any, error) {
+	// AddTask another task to fill the queue
+	err = pool.AddTask(func(ctx context.Context) (any, error) {
 		return nil, nil
 	})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestWorkerPool_QueueFull(t *testing.T) {
 	}
 
 	// Try to submit a third task, which should fail because the queue is full
-	err = pool.Submit(func(ctx context.Context) (any, error) {
+	err = pool.AddTask(func(ctx context.Context) (any, error) {
 		return nil, nil
 	})
 	if err == nil {
@@ -164,7 +164,7 @@ func TestWorkerPool_Cancellation(t *testing.T) {
 	cancel()
 
 	// Try to submit a task after cancellation
-	err = pool.Submit(func(ctx context.Context) (any, error) {
+	err = pool.AddTask(func(ctx context.Context) (any, error) {
 		return nil, nil
 	})
 	if err == nil {
@@ -173,5 +173,74 @@ func TestWorkerPool_Cancellation(t *testing.T) {
 
 	if err.Error() != "worker pool stopped" {
 		t.Fatalf("Expected error 'worker pool stopped', got '%v'", err)
+	}
+}
+
+func TestWorkerPool_Results(t *testing.T) {
+	// Create a worker pool with 2 workers and a queue size of 5
+	pool, err := routines.NewWorkerPool(context.Background(), 2, 5)
+	if err != nil {
+		t.Fatalf("Failed to create worker pool: %v", err)
+	}
+
+	// Start the worker pool
+	if err := pool.Start(); err != nil {
+		t.Fatalf("Failed to start worker pool: %v", err)
+	}
+	defer pool.Stop()
+
+	// Get the results channel
+	resultsChannel := pool.GetResultsChan()
+
+	// AddTask tasks with different results and errors
+	expectedResults := []any{"result1", "result2", nil}
+	expectedErrors := []error{nil, nil, errors.New("test error")}
+
+	for i := 0; i < 3; i++ {
+		index := i // Capture the loop variable
+		err := pool.AddTask(func(ctx context.Context) (any, error) {
+			return expectedResults[index], expectedErrors[index]
+		})
+		if err != nil {
+			t.Fatalf("Failed to submit task: %v", err)
+		}
+	}
+
+	// Collect results
+	var results []any
+	var errs []error
+
+	// Wait for all tasks to complete and collect results
+	for i := 0; i < 3; i++ {
+		select {
+		case result := <-resultsChannel:
+			results = append(results, result.Result)
+			errs = append(errs, result.Error)
+		case <-time.After(1 * time.Second):
+			t.Fatal("Timeout waiting for results")
+		}
+	}
+
+	// Verify that we got all expected results and errors
+	// Note: The order of results may not match the order of submission
+	for i := 0; i < 3; i++ {
+		found := false
+		for j := 0; j < 3; j++ {
+			// Check if this result matches any expected result
+			resultMatches := (expectedResults[i] == nil && results[j] == nil) ||
+				(expectedResults[i] != nil && results[j] != nil && expectedResults[i] == results[j])
+
+			errorMatches := (expectedErrors[i] == nil && errs[j] == nil) ||
+				(expectedErrors[i] != nil && errs[j] != nil && expectedErrors[i].Error() == errs[j].Error())
+
+			if resultMatches && errorMatches {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			t.Fatalf("Expected result %v with error %v not found in results", expectedResults[i], expectedErrors[i])
+		}
 	}
 }
