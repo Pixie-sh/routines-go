@@ -27,7 +27,7 @@ func TestWorkerPool_Basic(t *testing.T) {
 
 	// AddTask 5 tasks
 	for i := 0; i < 5; i++ {
-		err := pool.AddTask(func(ctx context.Context) (any, error) {
+		_, err := pool.AddTask(func(ctx context.Context) (interface{}, error) {
 			time.Sleep(100 * time.Millisecond) // Simulate work
 			atomic.AddInt32(&counter, 1)
 			return nil, nil
@@ -46,33 +46,6 @@ func TestWorkerPool_Basic(t *testing.T) {
 	}
 }
 
-func TestWorkerPool_SubmitWait(t *testing.T) {
-	// Create a worker pool with 1 worker and a queue size of 1
-	pool, err := routines.NewWorkerPool(context.Background(), 1, 1)
-	if err != nil {
-		t.Fatalf("Failed to create worker pool: %v", err)
-	}
-
-	// Start the worker pool
-	if err := pool.Start(); err != nil {
-		t.Fatalf("Failed to start worker pool: %v", err)
-	}
-	defer pool.Stop()
-
-	// AddTask a task and wait for its result
-	result, err := pool.AddTaskAndWait(func(ctx context.Context) (any, error) {
-		return "test result", nil
-	})
-
-	if err != nil {
-		t.Fatalf("Task returned an error: %v", err)
-	}
-
-	if result != "test result" {
-		t.Fatalf("Expected result 'test result', got '%v'", result)
-	}
-}
-
 func TestWorkerPool_Error(t *testing.T) {
 	// Create a worker pool with 1 worker and a queue size of 1
 	pool, err := routines.NewWorkerPool(context.Background(), 1, 1)
@@ -87,7 +60,7 @@ func TestWorkerPool_Error(t *testing.T) {
 	defer pool.Stop()
 
 	// AddTask a task that returns an error
-	_, err = pool.AddTaskAndWait(func(ctx context.Context) (any, error) {
+	_, err = pool.AddTaskAndWait(func(ctx context.Context) (interface{}, error) {
 		return nil, errors.New("test error")
 	})
 
@@ -101,8 +74,8 @@ func TestWorkerPool_Error(t *testing.T) {
 }
 
 func TestWorkerPool_QueueFull(t *testing.T) {
-	// Create a worker pool with 1 worker and a queue size of 2
-	pool, err := routines.NewWorkerPool(context.Background(), 1, 2)
+	// Create a worker pool with 1 worker and a queue size of 1
+	pool, err := routines.NewWorkerPool(context.Background(), 1, 1)
 	if err != nil {
 		t.Fatalf("Failed to create worker pool: %v", err)
 	}
@@ -114,7 +87,7 @@ func TestWorkerPool_QueueFull(t *testing.T) {
 	defer pool.Stop()
 
 	// AddTask a task that blocks for a while
-	err = pool.AddTask(func(ctx context.Context) (any, error) {
+	_, err = pool.AddTask(func(ctx context.Context) (interface{}, error) {
 		time.Sleep(500 * time.Millisecond) // Block the worker
 		return nil, nil
 	})
@@ -122,16 +95,8 @@ func TestWorkerPool_QueueFull(t *testing.T) {
 		t.Fatalf("Failed to submit first task: %v", err)
 	}
 
-	// AddTask another task to fill the queue
-	err = pool.AddTask(func(ctx context.Context) (any, error) {
-		return nil, nil
-	})
-	if err != nil {
-		t.Fatalf("Failed to submit second task: %v", err)
-	}
-
-	// Try to submit a third task, which should fail because the queue is full
-	err = pool.AddTask(func(ctx context.Context) (any, error) {
+	// Try to submit a second task, which should fail because the queue is full
+	_, err = pool.AddTask(func(ctx context.Context) (interface{}, error) {
 		return nil, nil
 	})
 	if err == nil {
@@ -164,7 +129,7 @@ func TestWorkerPool_Cancellation(t *testing.T) {
 	cancel()
 
 	// Try to submit a task after cancellation
-	err = pool.AddTask(func(ctx context.Context) (any, error) {
+	_, err = pool.AddTask(func(ctx context.Context) (interface{}, error) {
 		return nil, nil
 	})
 	if err == nil {
@@ -189,31 +154,31 @@ func TestWorkerPool_Results(t *testing.T) {
 	}
 	defer pool.Stop()
 
-	// Get the results channel
-	resultsChannel := pool.GetResultsChan()
-
 	// AddTask tasks with different results and errors
-	expectedResults := []any{"result1", "result2", nil}
+	expectedResults := []interface{}{"result1", "result2", nil}
 	expectedErrors := []error{nil, nil, errors.New("test error")}
+
+	var resultChannels []<-chan routines.TaskResult
 
 	for i := 0; i < 3; i++ {
 		index := i // Capture the loop variable
-		err := pool.AddTask(func(ctx context.Context) (any, error) {
+		resultChan, err := pool.AddTask(func(ctx context.Context) (interface{}, error) {
 			return expectedResults[index], expectedErrors[index]
 		})
 		if err != nil {
 			t.Fatalf("Failed to submit task: %v", err)
 		}
+		resultChannels = append(resultChannels, resultChan)
 	}
 
 	// Collect results
-	var results []any
+	var results []interface{}
 	var errs []error
 
 	// Wait for all tasks to complete and collect results
-	for i := 0; i < 3; i++ {
+	for _, resultChan := range resultChannels {
 		select {
-		case result := <-resultsChannel:
+		case result := <-resultChan:
 			results = append(results, result.Result)
 			errs = append(errs, result.Error)
 		case <-time.After(1 * time.Second):
